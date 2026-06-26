@@ -1,0 +1,16 @@
+* { box-sizing: border-box; font-family: ui-sans-serif, system-ui, sans-serif; }
+body { margin: 0; background: #0f1115; color: #e6e6e6; }
+.card { max-width: 380px; margin: 12vh auto; padding: 24px; background: #171a21; border-radius: 12px; display: grid; gap: 12px; }
+input, button { padding: 10px 12px; border-radius: 8px; border: 1px solid #2a2f3a; background: #0f1115; color: inherit; font-size: 14px; }
+button { background: #3b82f6; border: none; cursor: pointer; }
+.app { max-width: 920px; margin: 0 auto; padding: 16px; }
+header { display: flex; align-items: center; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid #2a2f3a; }
+header button { margin-left: auto; }
+.chat { display: grid; grid-template-columns: 220px 1fr; gap: 16px; margin-top: 16px; }
+.threads { display: grid; gap: 6px; align-content: start; }
+.threads button { background: #171a21; text-align: left; }
+.threads button.active { background: #243; }
+.messages { display: grid; gap: 8px; align-content: start; min-height: 50vh; }
+.msg { background: #171a21; padding: 8px 12px; border-radius: 8px; }
+.composer { display: flex; gap: 8px; margin-top: 12px; }
+.composer input { flex: 1; }
