@@ -285,7 +285,9 @@ local-first / federation model — the database *is* the org boundary).
 
 ---
 
-## Open Questions
+## Design Decisions
+
+All resolved; kept here as rationale.
 
 - ~~**id strategy**~~ — **Resolved:** `uuid v7` for `id` on all tables;
   `bigint seq` on `event` only, as canonical replay order. Complementary,
@@ -303,5 +305,7 @@ local-first / federation model — the database *is* the org boundary).
 - ~~**Multi-tenancy**~~ — **Resolved:** none. **One org == one database**
   (DB-per-org); no RLS / shared-schema tenancy. `org_id` is federation
   provenance, not a tenancy discriminator. See [Federation & Tenancy](#federation--tenancy).
-- **Snapshots** — store periodic folded snapshots to bound twin/projection
-  replay cost?
+- ~~**Snapshots**~~ — **Resolved:** not a core concern. `twin.state` +
+  `last_event_seq` already act as a live snapshot; point-in-time replay
+  optimization is **deferred to the org admin**, who can add their own views or
+  snapshot tables as needed. Not built into the base schema.
