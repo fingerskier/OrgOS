@@ -179,6 +179,80 @@ Querying the log is plain SQL — see [QUERY.md](./QUERY.md).
 
 ---
 
+## Validation & Fan-out
+
+Three distinct roles — do not conflate them.
+
+### 1. Validation — DB trigger (correctness)
+
+The trigger is the only chokepoint every writer crosses (humans, AI, devices,
+federated imports). In an append-only log, invalid data is permanent, so
+validation must be authoritative at the log, not just at the client.
+
+```
+-- requires the pg_jsonschema extension
+CREATE FUNCTION event_validate() RETURNS trigger AS $$
+DECLARE s jsonb;
+BEGIN
+  SELECT schema INTO s FROM event_type WHERE id = NEW.event_type_id;
+  IF s IS NULL THEN
+    RAISE EXCEPTION 'unknown event_type %', NEW.event_type_id;
+  END IF;
+  IF NOT jsonb_matches_schema(s, NEW.payload) THEN
+    RAISE EXCEPTION 'payload fails schema for %', NEW.event_type_id;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER event_validate_trg
+  BEFORE INSERT ON event
+  FOR EACH ROW EXECUTE FUNCTION event_validate();
+```
+
+- Cache/denormalize `event_type.schema` to avoid a lookup per insert on the
+  hot path.
+- Do **friendly** validation app-side for UX; the trigger is the
+  **authoritative** gate for integrity. Belt + suspenders.
+
+### 2. Fan-out — LISTEN/NOTIFY (wake signal only)
+
+`AFTER INSERT` trigger emits the new `seq` (NOTIFY has an 8 KB cap — **never
+ship the payload**, only the cursor).
+
+```
+CREATE FUNCTION event_notify() RETURNS trigger AS $$
+BEGIN
+  PERFORM pg_notify('events', NEW.seq::text);
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER event_notify_trg
+  AFTER INSERT ON event
+  FOR EACH ROW EXECUTE FUNCTION event_notify();
+```
+
+> NOTIFY fires on COMMIT (no phantom wakes on rollback) but is **not durable** —
+> only currently-connected listeners receive it. Never treat it as delivery.
+
+### 3. Delivery — `seq` + checkpoint (durability)
+
+Durability comes from the log, not the notification. A projector:
+
+1. On (re)connect, **catch-up poll first**:
+   `SELECT … FROM event WHERE seq > last_event_seq ORDER BY seq` — covers any
+   down-window the NOTIFY missed.
+2. `LISTEN events`; on wake, pull new rows the same way and advance
+   `projection_checkpoint.last_event_seq`.
+
+NOTIFY only removes polling latency while the projector is up; correctness
+never depends on it.
+
+> **Scaling path:** NOTIFY is single-node, modest fan-out. When projectors or
+> federation outgrow it, swap the wake mechanism for logical replication / WAL
+> (`wal2json`, Debezium) — same `seq` + checkpoint model, durable stream.
+
+---
+
 ## Federation
 
 Each `org_id` is a sovereign boundary. Events replicate between orgs by
@@ -194,8 +268,10 @@ namespaces/streams to share.
   `bigint seq` on `event` only, as canonical replay order. Complementary,
   not either/or — v7 gives identity + index locality, `seq` gives strict
   total order replay can't get from v7's same-ms/cross-node ties.
-- **Payload validation** — enforce JSON Schema in app layer, DB trigger, or
-  a deferred validator projection?
+- ~~**Payload validation**~~ — **Resolved:** authoritative JSON Schema
+  validation via `BEFORE INSERT` trigger (`pg_jsonschema`); LISTEN/NOTIFY as
+  wake signal (seq only); `seq` + checkpoint for durable delivery. See
+  [Validation & Fan-out](#validation--fan-out).
 - **Stream definition** — is `stream_id` always the subject, or a separate
   aggregate concept (e.g. a conversation thread spanning many subjects)?
 - **Multi-tenancy** — `org_id` column + RLS vs schema-per-org vs DB-per-org.
