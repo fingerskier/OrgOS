@@ -19,7 +19,8 @@ Two registry/projection halves:
 ## 1. Register a twin type
 
 A type is a slow-changing registry row — defined once by administration, like
-an `event_type`. Here, a temperature/humidity sensor:
+an `event_type`.
+Here, a temperature/humidity sensor:
 
 ```sql
 INSERT INTO twin_type (id, namespace, name, schema, status, created_at)
@@ -95,8 +96,9 @@ VALUES (
 
 ## 3. Update twin state
 
-Updates are events too. A device reports telemetry; the twin folds it. The
-**device events feed the twin** — they share the same `subject_id`:
+Updates are events too.
+A device reports telemetry; the twin folds it.
+The **device events feed the twin** — they share the same `subject_id`:
 
 ```sql
 -- a reading arrives (firehose: no stream_seq needed)
@@ -130,7 +132,8 @@ WHERE id = $sensor_twin_id
 > (QUERY §7) requires.
 
 A semantic state change uses `device.state.changed` / `twin.state.updated`;
-telemetry uses `device.telemetry.received`. Same fold, different verbs by intent.
+telemetry uses `device.telemetry.received`.
+Same fold, different verbs by intent.
 
 ---
 
@@ -205,9 +208,8 @@ SELECT depth, id, display_name FROM contained ORDER BY depth;
 
 ## 6. Retire a twin
 
-Twins are never hard-deleted — that would orphan their events. Emit
-`twin.instance.retired`; the projector marks the row terminal but keeps it
-(and the full event history) readable:
+Twins are never hard-deleted — that would orphan their events.
+Emit `twin.instance.retired`; the projector marks the row terminal but keeps it (and the full event history) readable:
 
 ```sql
 INSERT INTO event (id, event_type_id, namespace, name, version,
@@ -247,5 +249,5 @@ twin.instance.created    ──▶  twin row inserted          (state seeded)
 twin.instance.retired    ──▶  twin marked terminal        (history retained)
 ```
 
-The twin row is only ever a **cache of the fold**. Drop it, replay the
-events, get the identical state — that invariant is the whole point.
+The twin row is only ever a **cache of the fold**.
+Drop it, replay the events, get the identical state — that invariant is the whole point.
