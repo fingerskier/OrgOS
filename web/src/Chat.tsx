@@ -47,7 +47,11 @@ export function Chat() {
     if (!body || !active) return
     setDraft('')
     const post = async (): Promise<void> => {
-      const v = view && view.threadId === active ? view : await api.get<ThreadView>(`/projections/chat?thread=${active}`)
+      // Always fetch a fresh view so streamSeq is computed from current data.
+      // Reading the closed-over `view` here would make the 409 retry re-post the
+      // same (stale) streamVersion+1 and conflict again, since setView from the
+      // catch block does not synchronously update this closure.
+      const v = await api.get<ThreadView>(`/projections/chat?thread=${active}`)
       await api.post('/events', {
         type: 'chat.message.posted@1', subjectId: uuid(), streamId: active,
         streamSeq: v.streamVersion + 1, payload: { body },
