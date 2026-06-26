@@ -48,7 +48,7 @@ export async function buildApp(cfg: Config, inject?: { sql?: Sql }):
     return { actorId: rows[0].actor_id, orgId: ORG_ID, roles: rows[0].roles }
   }
 
-  registerAuth(app, { identity, loginTokens, mailer, queries, sql, cfg, sessionCookie: SID } as any)
+  registerAuth(app, { identity, loginTokens, mailer, sql, cfg, sessionCookie: SID })
   registerRest(app, { commands, queries, getActor, sse })
 
   // live tail: broadcast every committed seq to SSE clients (skip when sql injected w/o real conn)
