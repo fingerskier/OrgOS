@@ -12,8 +12,12 @@
 
 ## Conventions
 
-- `id` — `uuid` (v7 preferred, time-sortable), application- or DB-generated.
-- `seq` — `bigint` global monotonic order, DB-assigned (`bigserial`/identity).
+- `id` — `uuid v7` on **every** table (time-sortable prefix ⇒ btree insert
+  locality, per-node generation ⇒ federation-safe). DB-native `uuidv7()` on
+  Postgres 18+, else app-generated.
+- `seq` — `bigint` strict total order, DB-assigned (identity/`bigserial`).
+  Lives **only on `event`** as the canonical replay order; `id` (v7) is not a
+  substitute — same-ms / cross-node events have no defined order.
 - Timestamps are `timestamptz`, UTC.
 - Structured payloads are `jsonb`.
 - Naming: `snake_case` columns, singular table names.
@@ -76,8 +80,8 @@ Append-only. Immutable. The single source of truth.
 
 ```
 event {
-  id              uuid          PK            -- uuid v7
-  seq             bigint        UNIQUE        -- global monotonic order (bigserial)
+  id              uuid          PK            -- uuid v7 (identity)
+  seq             bigint        UNIQUE        -- strict total replay order (identity/bigserial)
   event_type_id   uuid          FK -> event_type.id
   namespace       text                        -- denormalized for query/partition
   name            text
@@ -186,8 +190,10 @@ namespaces/streams to share.
 
 ## Open Questions
 
-- **id strategy** — uuid v7 (time-sortable, no extra `seq` needed) vs
-  bigserial `seq` + random uuid. Listed both above; pick one.
+- ~~**id strategy**~~ — **Resolved:** `uuid v7` for `id` on all tables;
+  `bigint seq` on `event` only, as canonical replay order. Complementary,
+  not either/or — v7 gives identity + index locality, `seq` gives strict
+  total order replay can't get from v7's same-ms/cross-node ties.
 - **Payload validation** — enforce JSON Schema in app layer, DB trigger, or
   a deferred validator projection?
 - **Stream definition** — is `stream_id` always the subject, or a separate
