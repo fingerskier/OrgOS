@@ -18,5 +18,10 @@ export function makeQueries(sql: Sql) {
         SELECT max(stream_seq)::text AS v FROM event WHERE stream_id = ${threadId}`
       return { threadId, streamVersion: Number(head[0]?.v ?? 0), messages }
     },
+    async eventsForSubject(subject: string, after: string) {
+      return sql`SELECT seq::text, namespace, name, version, actor_id, subject_id, stream_id,
+                 stream_seq::text, payload, occurred_at FROM event
+                 WHERE subject_id = ${subject} AND seq > ${after} ORDER BY seq`
+    },
   }
 }
