@@ -1,1 +1,1 @@
-# Common Types
+# Common Event Types/Names
