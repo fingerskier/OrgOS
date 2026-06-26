@@ -88,7 +88,7 @@ event {
   version         int
 
   actor_id        uuid          FK -> actor.id   -- who/what emitted it
-  org_id          uuid          FK -> actor.id   -- federation / tenancy boundary
+  org_id          uuid          FK -> actor.id   -- federation provenance: origin org (defaults to local org)
 
   subject_id      uuid                          -- semantic: what the event is about (projection/timeline grouping)
   stream_id       uuid          NULL            -- consistency boundary; writer-imposed, defaults to subject_id, NULL for firehose
@@ -267,12 +267,21 @@ never depends on it.
 
 ---
 
-## Federation
+## Federation & Tenancy
 
-Each `org_id` is a sovereign boundary. Events replicate between orgs by
-shipping rows from `event` (append-only ⇒ safe to merge). `seq` is local;
-cross-org ordering uses `occurred_at` + `signature` + `id`. Orgs choose which
-namespaces/streams to share.
+**One org == one database.** There is no in-database multi-tenancy: no RLS, no
+shared-schema discriminator. Each org is a sovereign node (aligns with the
+local-first / federation model — the database *is* the org boundary).
+
+- The **local org** is a singleton (config / a single `actor` of `kind='org'`).
+  Its events carry `org_id = <local org>` by default.
+- `org_id` is therefore **federation provenance** — it tags the *origin* org of
+  an event, which matters once foreign events are replicated in. It is **not** a
+  tenancy filter; every row in this DB belongs to this org's world.
+- Federation = shipping append-only `event` rows between databases (safe to
+  merge — nothing is mutated). `seq` is local to each DB; cross-org ordering
+  uses `occurred_at` + `signature` + `id`. Orgs choose which namespaces/streams
+  to share.
 
 ---
 
@@ -291,6 +300,8 @@ namespaces/streams to share.
   coarser aggregate (thread, order, saga); NULL for firehose events. Distinct
   axis from `subject_id` (semantic grouping). Concurrency enforced solely by
   `UNIQUE (stream_id, stream_seq)`.
-- **Multi-tenancy** — `org_id` column + RLS vs schema-per-org vs DB-per-org.
+- ~~**Multi-tenancy**~~ — **Resolved:** none. **One org == one database**
+  (DB-per-org); no RLS / shared-schema tenancy. `org_id` is federation
+  provenance, not a tenancy discriminator. See [Federation & Tenancy](#federation--tenancy).
 - **Snapshots** — store periodic folded snapshots to bound twin/projection
   replay cost?
