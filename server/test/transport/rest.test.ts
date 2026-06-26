@@ -23,6 +23,12 @@ describe('REST', () => {
       type: 'chat.thread.created@1', subjectId: 'x', streamId: 'x', streamSeq: 1, payload: { title: 't' } } })
     expect(res.statusCode).toBe(401)
   })
+  it('rejects unauthenticated reads (401) on events + projection routes', async () => {
+    for (const url of ['/events?subject=x', '/projections/actors', '/projections/threads', '/projections/chat?thread=x']) {
+      const res = await app.inject({ method: 'GET', url })
+      expect(res.statusCode).toBe(401)
+    }
+  })
   it('full login → create thread → post message → read projection', async () => {
     // request magic link
     const r1 = await app.inject({ method: 'POST', url: '/auth/request', payload: { email: 'matt@x.io' } })
