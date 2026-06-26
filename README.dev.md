@@ -68,9 +68,11 @@ Open **http://localhost:5173** in your browser.
 
 1. Enter any email address in the sign-in form and submit.
 2. In dev mode (`NODE_ENV=development`), the magic link is:
-   - **Printed to the server console** (look for `devLink: http://...`)
-   - **Returned in the JSON response body** as `{ devLink: "http://..." }` (no real email is sent)
-3. Copy the `devLink` URL and open it in your browser (or click it from the UI). This sets your session cookie and logs you in.
+   - **Printed to the server console** by the dev mailer — look for a line like
+     `[magic-link] to=<email>` followed by the URL on the next line
+   - **Returned in the JSON response body** as `{ devLink: "http://..." }`, which the
+     sign-in form also displays as a clickable link (no real email is sent)
+3. Copy the link URL and open it in your browser (or click it from the UI). This sets your session cookie and logs you in.
 4. `GET /auth/me` will now return your actor JSON.
 
 ---
