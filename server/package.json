@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "migrate": "tsx bin/migrate.ts",
-    "dev": "tsx watch src/server.ts",
-    "start": "tsx src/server.ts",
+    "migrate": "tsx --env-file=.env bin/migrate.ts",
+    "dev": "tsx watch --env-file=.env --input-type=module --eval \"import { buildApp } from './src/server.ts'; import { loadConfig } from './src/config.ts'; const cfg = loadConfig(); const { app } = await buildApp(cfg); await app.listen({ port: cfg.port, host: '0.0.0.0' }); console.log('OrgOS server on :' + cfg.port);\"",
+    "start": "tsx --env-file=.env --input-type=module --eval \"import { buildApp } from './src/server.ts'; import { loadConfig } from './src/config.ts'; const cfg = loadConfig(); const { app } = await buildApp(cfg); await app.listen({ port: cfg.port, host: '0.0.0.0' }); console.log('OrgOS server on :' + cfg.port);\"",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -5,6 +5,8 @@
 > Chat is not the product. Tickets are not the product. Wikis are not the product.
 > **Events are the product.**
 
+> 🛠️ **Running the beta locally?** See [README.dev.md](README.dev.md).
+
 ---
 
 ## Vision
