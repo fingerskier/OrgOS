@@ -41,8 +41,10 @@ describe('appender', () => {
     const stream = '00000000-0000-7000-8000-0000000000c3'
     await app.append({ type: 'chat.message.posted@1', actorId: ACT, orgId: ORG,
       subjectId: stream, streamId: stream, streamSeq: 1, payload: { body: 'a' } })
-    await expect(app.append({ type: 'chat.message.posted@1', actorId: ACT, orgId: ORG,
-      subjectId: stream, streamId: stream, streamSeq: 1, payload: { body: 'b' } }))
-      .rejects.toBeInstanceOf(ConcurrencyError)
+    const err = await app.append({ type: 'chat.message.posted@1', actorId: ACT, orgId: ORG,
+      subjectId: stream, streamId: stream, streamSeq: 1, payload: { body: 'b' } })
+      .then(() => null, (e) => e)
+    expect(err).toBeInstanceOf(ConcurrencyError)
+    expect(err.currentVersion).toBe('1')
   })
 })

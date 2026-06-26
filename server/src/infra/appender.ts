@@ -45,6 +45,11 @@ export function makeAppender(sql: Sql) {
       } catch (err) {
         const e = err as { code?: string; message?: string }
         if (e.code === '23505') {
+          // A stream_seq collision requires a stream. With a null streamId the
+          // (stream_id, stream_seq) unique index cannot collide (NULL <> NULL),
+          // so a 23505 here is some other constraint (e.g. a PK collision) —
+          // propagate it rather than misdiagnosing it as a concurrency conflict.
+          if (input.streamId == null) throw err
           const cur = await sql<{ v: string | null }[]>`
             SELECT max(stream_seq)::text AS v FROM event WHERE stream_id = ${input.streamId}`
           throw new ConcurrencyError(cur[0]?.v ?? null)
