@@ -90,9 +90,9 @@ event {
   actor_id        uuid          FK -> actor.id   -- who/what emitted it
   org_id          uuid          FK -> actor.id   -- federation / tenancy boundary
 
-  subject_id      uuid                          -- primary entity the event is about (twin, actor, ...)
-  stream_id       uuid                          -- aggregate/stream for ordering & concurrency
-  stream_seq      bigint                        -- position within stream (optimistic concurrency)
+  subject_id      uuid                          -- semantic: what the event is about (projection/timeline grouping)
+  stream_id       uuid          NULL            -- consistency boundary; writer-imposed, defaults to subject_id, NULL for firehose
+  stream_seq      bigint        NULL            -- writer-assigned expected-next-version within the stream
 
   payload         jsonb                         -- validated against event_type.schema
   metadata        jsonb                         -- correlation_id, causation_id, trace, source
@@ -108,6 +108,20 @@ event {
 - **Never** `UPDATE` or `DELETE`. Corrections are new events
   (`*.corrected`, `*.archived`).
 - `seq` gives total order for replay; `stream_seq` gives per-aggregate order.
+- **`subject_id` vs `stream_id` are different axes.** `subject_id` = *what the
+  event is about* (grouping). `stream_id` = *the consistency/ordering unit*.
+  They usually coincide, so the convention is `stream_id = subject_id` by
+  default — but the writer overrides when the aggregate is coarser than the
+  subject (e.g. a `chat.message.posted` whose subject is the message but whose
+  stream is the conversation).
+- **Optimistic concurrency.** An append is a conditional write: the writer
+  asserts `stream_seq = N` expecting the stream is at `N-1`. The server only
+  enforces `UNIQUE (stream_id, stream_seq)`, so concurrent appends at the same
+  version collide → one fails → retry. `stream_id`/`stream_seq` are therefore
+  **writer-imposed, not server-derived** — the DB can't infer the aggregate.
+- **Firehose.** Events needing no conditional append (telemetry, sensor
+  readings) leave `stream_id` / `stream_seq` NULL and rely on global `seq`
+  only; NULLs never collide under the unique constraint.
 - `correlation_id` / `causation_id` in `metadata` link cause→effect chains.
 - Partition by `recorded_at` (range) and/or `org_id` (federation) at scale.
 
@@ -272,8 +286,11 @@ namespaces/streams to share.
   validation via `BEFORE INSERT` trigger (`pg_jsonschema`); LISTEN/NOTIFY as
   wake signal (seq only); `seq` + checkpoint for durable delivery. See
   [Validation & Fan-out](#validation--fan-out).
-- **Stream definition** — is `stream_id` always the subject, or a separate
-  aggregate concept (e.g. a conversation thread spanning many subjects)?
+- ~~**Stream definition**~~ — **Resolved:** `stream_id` is the consistency
+  boundary, **writer-imposed**, defaulting to `subject_id` but overridable to a
+  coarser aggregate (thread, order, saga); NULL for firehose events. Distinct
+  axis from `subject_id` (semantic grouping). Concurrency enforced solely by
+  `UNIQUE (stream_id, stream_seq)`.
 - **Multi-tenancy** — `org_id` column + RLS vs schema-per-org vs DB-per-org.
 - **Snapshots** — store periodic folded snapshots to bound twin/projection
   replay cost?
