@@ -65,7 +65,7 @@ OrgOS/
 ### Task 1: Repo scaffold, Postgres, config, db pool, uuid
 
 **Files:**
-- Create: `docker-compose.yml`, `server/package.json`, `server/tsconfig.json`, `server/vitest.config.ts`, `server/.env.example`, `server/.gitignore`
+- Create: `docker-compose.yml`, `db/Dockerfile`, `server/package.json`, `server/tsconfig.json`, `server/vitest.config.ts`, `server/.env.example`, `server/.gitignore`
 - Create: `server/src/config.ts`, `server/src/infra/db.ts`, `server/src/infra/uuid.ts`
 - Create: `server/migrations/001_extensions.sql`, `server/migrations/002_core.sql`
 - Create: `server/src/infra/migrate.ts`, `server/bin/migrate.ts`
@@ -74,13 +74,33 @@ OrgOS/
 **Interfaces:**
 - Produces: `newId(): string` (`infra/uuid.ts`); `makeDb(url: string): Sql` where `Sql = postgres.Sql` (`infra/db.ts`); `loadConfig(env?): Config` (`config.ts`); `runMigrations(sql, dir): Promise<string[]>` (`infra/migrate.ts`); `withTestDb(fn): Promise<void>` + `freshSchema(): Promise<{sql, drop}>` (`test/helpers/testDb.ts`).
 
-- [ ] **Step 1: docker-compose for Postgres + pg_jsonschema**
+- [ ] **Step 1: Dockerfile + docker-compose for Postgres + pg_jsonschema**
+
+> **Why a custom image (verified, do not substitute):** The `supabase/postgres`
+> image was tested and is unusable here — its entrypoint enforces peer/`supabase_map`
+> auth and ignores standard `POSTGRES_USER` simple-auth, so the container exits with
+> "Peer authentication failed for user orgos". Build a stock `postgres:16` image and
+> install the prebuilt `pg_jsonschema` `.deb` instead. This was smoke-tested working:
+> `CREATE EXTENSION pg_jsonschema` succeeds and `jsonb_matches_schema(...)` validates
+> correctly. **Do not** revert to a supabase image.
+
+`db/Dockerfile`:
+```dockerfile
+FROM postgres:16
+# pg_jsonschema prebuilt for PG16. The .deb is amd64-specific; on an arm64 host
+# swap the asset for the arm64 variant from the same release.
+ARG PGJ=v0.3.4
+ADD https://github.com/supabase/pg_jsonschema/releases/download/${PGJ}/pg_jsonschema-${PGJ}-pg16-amd64-linux-gnu.deb /tmp/pgj.deb
+RUN dpkg -i /tmp/pgj.deb && rm /tmp/pgj.deb
+```
 
 `docker-compose.yml`:
 ```yaml
 services:
   db:
-    image: supabase/postgres:15.8.1.060   # ships pg_jsonschema; if pull 404s, pick latest tag from hub.docker.com/r/supabase/postgres/tags
+    build:
+      context: .
+      dockerfile: db/Dockerfile
     environment:
       POSTGRES_USER: orgos
       POSTGRES_PASSWORD: orgos
@@ -92,6 +112,9 @@ services:
       timeout: 3s
       retries: 30
 ```
+
+Bring it up with `docker compose up -d --build` (the `--build` is required the
+first time and whenever `db/Dockerfile` changes).
 
 - [ ] **Step 2: server package.json + tsconfig + vitest config**
 
@@ -861,7 +884,9 @@ BEGIN
   IF s IS NULL THEN
     RAISE EXCEPTION 'unknown event_type %', NEW.event_type_id USING ERRCODE = 'P0001';
   END IF;
-  IF NOT jsonb_matches_schema(s, NEW.payload) THEN
+  -- pg_jsonschema signature is jsonb_matches_schema(schema json, instance jsonb);
+  -- event_type.schema is jsonb, so cast s::json (VERIFIED — passing jsonb errors "function does not exist").
+  IF NOT jsonb_matches_schema(s::json, NEW.payload) THEN
     RAISE EXCEPTION 'payload fails schema for %.%@%', NEW.namespace, NEW.name, NEW.version
       USING ERRCODE = 'P0001';
   END IF;
@@ -896,12 +921,15 @@ const ACT = '00000000-0000-7000-8000-0000000000bb'
 
 beforeAll(async () => {
   ;({ sql, drop } = await freshSchema())
-  // seed the two types this test uses
+  // seed the two types this test uses. ON CONFLICT keeps this idempotent once
+  // 005_seed.sql exists (freshSchema applies every migration, including the seed
+  // that registers these same types) — without it the insert would 23505.
   await sql`INSERT INTO event_type (id, namespace, name, version, schema) VALUES
     (gen_random_uuid(), 'chat', 'thread.created', 1,
      '{"type":"object","properties":{"title":{"type":"string","minLength":1}},"required":["title"]}'::jsonb),
     (gen_random_uuid(), 'chat', 'message.posted', 1,
-     '{"type":"object","properties":{"body":{"type":"string","minLength":1}},"required":["body"]}'::jsonb)`
+     '{"type":"object","properties":{"body":{"type":"string","minLength":1}},"required":["body"]}'::jsonb)
+    ON CONFLICT (namespace, name, version) DO NOTHING`
 })
 afterAll(async () => { await drop() })
 
@@ -2524,7 +2552,7 @@ git commit -m "docs: beta quickstart + end-to-end run"
 - Testing: pure folds, infra integration, app/auth with fakes → Tasks 3,4 / 5,6,7 / 8,10 ✓
 - Ports 8787/5173, WEB_ORIGIN → Task 1 + Task 11 ✓
 
-**Placeholder scan:** No "TBD"/"implement later". The only non-literal is the `supabase/postgres` image tag, flagged with a one-line "bump to latest if pull 404s" instruction — a config value the implementer confirms at `docker pull`, not a logic gap.
+**Placeholder scan:** No "TBD"/"implement later". The Postgres image is a custom `db/Dockerfile` (stock `postgres:16` + the verified `pg_jsonschema` v0.3.4 `.deb`); the only host-specific value is the `.deb` arch (amd64 by default; arm64 hosts swap the asset), flagged inline in the Dockerfile — not a logic gap.
 
 **Type consistency:** `AppendInput`/`AppendRequest` distinguished (infra vs app); `ActorCtx` (`{actorId, orgId, roles}`) shared by authz/commands/rest/server; `StoredEvent` shared by folds/projector; `resolveActor` returns `{actorId, handle}` consistently; `streamVersion` (number) consistent server (queries) ↔ web (Chat). `queries.eventsForSubject` is declared in Task 9 Step 4 and consumed by `/events` in the same task.
 
