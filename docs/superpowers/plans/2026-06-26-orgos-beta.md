@@ -886,7 +886,11 @@ BEGIN
   END IF;
   -- pg_jsonschema signature is jsonb_matches_schema(schema json, instance jsonb);
   -- event_type.schema is jsonb, so cast s::json (VERIFIED — passing jsonb errors "function does not exist").
-  IF NOT jsonb_matches_schema(s::json, NEW.payload) THEN
+  -- Schema-qualify as public.jsonb_matches_schema: the extension installs into public, but
+  -- integration tests run with search_path = <test_schema> only (no public), so an unqualified
+  -- call would error "function does not exist" inside a test schema (VERIFIED empirically).
+  -- The SELECT above stays unqualified so it resolves event_type in the caller's schema.
+  IF NOT public.jsonb_matches_schema(s::json, NEW.payload) THEN
     RAISE EXCEPTION 'payload fails schema for %.%@%', NEW.namespace, NEW.name, NEW.version
       USING ERRCODE = 'P0001';
   END IF;
