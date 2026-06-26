@@ -1,32 +1,35 @@
 # OrgOS Beta — Design Spec
 
 > Status: approved 2026-06-26. Scope: **Identity + Chat** slice of the OrgOS
-> service plus a webapp with Google OAuth. Grounds out the architecture in
-> [doc/ARCH.md](../../../doc/ARCH.md), [doc/SCHEMA.md](../../../doc/SCHEMA.md),
-> [doc/TYPES.md](../../../doc/TYPES.md), [doc/QUERY.md](../../../doc/QUERY.md).
+> service plus a webapp with passwordless **email magic-link** auth. Grounds out
+> the architecture in [doc/ARCH.md](../../../doc/ARCH.md),
+> [doc/SCHEMA.md](../../../doc/SCHEMA.md), [doc/TYPES.md](../../../doc/TYPES.md),
+> [doc/QUERY.md](../../../doc/QUERY.md).
 
 ## Goal
 
 Ship the smallest slice that exercises the full OrgOS loop end-to-end —
 **append → authoritative validate → project → live tail** — behind a real
-REST API, with a webapp that authenticates via Google OAuth and renders a live
-chat projection. This is the foundation every later projection (task, twins,
-federation) reuses unchanged.
+REST API, with a webapp that authenticates via an email magic-link and renders
+a live chat projection. This is the foundation every later projection (task,
+twins, federation) reuses unchanged.
 
 ## Scope
 
 **In:**
 - Event-sourced core: `actor`, `event_type`, `event`, `projection_checkpoint`.
-- Writer (append path) with optimistic concurrency and authoritative DB-trigger
-  validation.
+- Writer (append path) with optimistic concurrency and authoritative DB-trigger validation.
 - Generic projector runtime + two projections: `chat_message`, `actor_state`.
 - REST/JSON API + SSE live tail.
-- Google OAuth2 login → `identity.actor.registered` event → `actor` row;
-  signed HTTP-only cookie session.
-- React/Vite webapp: Google login, chat thread UI with live updates.
+- Passwordless email magic-link login → `identity.actor.registered` event →
+  `actor` row; signed HTTP-only cookie session. Auth sits behind an
+  `IdentityProvider` seam so Google OAuth (or others) drop in later untouched.
+- React/Vite webapp: email login, chat thread UI with live updates.
 
-**Out (deferred, YAGNI for beta):** MCP transport, task/kanban, twins/devices,
-federation, event signatures, full RBAC. Authz is scaffolded but permissive.
+**Out (deferred, YAGNI for beta):** Google OAuth / other federated identity,
+real email delivery (dev-mode console only), MCP transport, task/kanban,
+twins/devices, federation, event signatures, full RBAC. Authz is scaffolded but
+permissive.
 
 ## Stack
 
@@ -38,12 +41,14 @@ federation, event signatures, full RBAC. Authz is scaffolded but permissive.
 | Validation     | `pg_jsonschema` trigger (authoritative) + `ajv` app-side (friendly) |
 | IDs            | uuid v7 generated **app-side** (no PG18 / extension dep)  |
 | Wake/fan-out   | `LISTEN/NOTIFY` (seq only)                                 |
+| Auth           | email magic-link (dev-mode console `Mailer`); cookie session |
 | Webapp         | Vite + React + TypeScript                                  |
 | Tests          | `vitest`; red/green TDD                                    |
 
 **Infra dependency:** Postgres must have the `pg_jsonschema` extension. A
 `docker-compose.yml` ships a Postgres image that includes it. uuid v7 is
-generated in app code, so no `pg_uuidv7` / PG 18 requirement.
+generated in app code, so no `pg_uuidv7` / PG 18 requirement. **No external auth
+provider is required** — the beta runs end-to-end with zero third-party creds.
 
 ## Repository layout
 
@@ -54,12 +59,12 @@ OrgOS/
     package.json  tsconfig.json  .env.example
     migrations/
       001_extensions.sql      # CREATE EXTENSION pg_jsonschema
-      002_core.sql            # actor, event_type, event, projection_checkpoint
+      002_core.sql            # actor, event_type, event, projection_checkpoint, login_token
       003_triggers.sql        # event_validate (BEFORE INSERT), event_notify (AFTER INSERT)
       004_projections.sql     # chat_message, actor_state read models
       005_seed.sql            # local org actor + identity.* & chat.* event_types
     src/
-      config.ts               # env load (DATABASE_URL, GOOGLE_*, SESSION_SECRET, WEB_ORIGIN)
+      config.ts               # env load (DATABASE_URL, SESSION_SECRET, WEB_ORIGIN, SERVER_PORT, MAGIC_LINK_TTL)
       domain/                 # PURE — zero I/O, unit-testable
         eventTypes.ts         # registry: namespace.name@version → { tsType, jsonSchema }
         folds/
@@ -71,13 +76,16 @@ OrgOS/
         projector.ts          # generic: checkpoint→catch-up→fold→upsert→LISTEN
         schemaCache.ts        # event_type schema cache, invalidated on event_type.*
         uuid.ts               # uuid v7 generator
+        mailer.ts             # Mailer interface + ConsoleMailer (logs/returns the link)
+        loginTokens.ts        # issue/verify/consume single-use magic-link tokens (login_token table)
       app/
         commands.ts           # append use-case: authz + ajv friendly-validate + appender
         queries.ts            # read projections (chat thread, actors)
         authz.ts              # grant check from actor_state (permissive default)
+        identity.ts           # IdentityProvider seam + find-or-register actor by email
       transport/
         rest.ts               # POST /events, GET /events, GET /projections/*, GET /twins/:id (stub)
-        auth.ts               # /auth/google, /callback, /me, /logout; cookie session
+        auth.ts               # POST /auth/request, GET /auth/callback, GET /auth/me, POST /auth/logout
         sse.ts                # GET /stream — NOTIFY-fed broadcast hub
       server.ts               # app factory: compose infra+app+transport via DI; listen
     test/
@@ -88,22 +96,24 @@ OrgOS/
     src/
       main.tsx  App.tsx
       api.ts                  # fetch wrapper (credentials: 'include')
-      auth.tsx                # "Sign in with Google", session/me state
+      auth.tsx                # email-entry form, "check your email" state, session/me state
       Chat.tsx                # thread list + messages + composer; SSE live tail
 ```
 
 ## Architecture (layers — each depends only on the one below)
 
-1. **Transport** — Fastify routes (REST), SSE hub, OAuth routes. Framing, auth,
+1. **Transport** — Fastify routes (REST), SSE hub, auth routes. Framing, auth,
    content-type. Translates a request into a *command* (→ writer) or *query*
    (→ read model).
-2. **Application** — command handlers (append use-case), queries, authz checks.
+2. **Application** — command handlers (append use-case), queries, authz checks,
+   identity (find-or-register).
 3. **Domain** — pure: the event-type registry (TS payload types + JSON Schemas)
    and fold functions `(state, event) => state`. No I/O. The same fold code the
    projector runs; unit-tested without a database.
 4. **Infrastructure** — `postgres.js` pool, appender, generic projector,
-   schema cache, uuid. The only code that does I/O. Injected via the app
-   factory (DI-for-testability, same pattern as `poemia-writer`).
+   schema cache, uuid, mailer, login-token store. The only code that does I/O.
+   Injected via the app factory (DI-for-testability, same pattern as
+   `poemia-writer`).
 
 ## Data model (deltas from SCHEMA.md, beta subset)
 
@@ -111,17 +121,22 @@ OrgOS/
 - `event` carries denormalized `namespace`/`name`/`version`, `subject_id`,
   `stream_id`/`stream_seq` (nullable), `payload` jsonb. `UNIQUE(stream_id,
   stream_seq)` enforces concurrency; `UNIQUE(seq)` is the replay order.
+- `login_token(token_hash PK, email, expires_at, used_at, created_at)` — an
+  **operational, ephemeral** table (single-use, expiring magic-link tokens).
+  Deliberately *not* event-sourced: it is auth plumbing, same category as the
+  session cookie, not domain truth. The token value is never stored — only its
+  hash. Registration of the actor *is* an event.
 - Read models:
   - `chat_message(message_id PK, thread_id, author_id, body, posted_at,
     edited_at, deleted bool, last_event_seq)` — folded from `chat.message.*`.
   - `actor_state(actor_id PK, handle, display_name, kind, status,
-    google_sub UNIQUE, roles text[], last_event_seq)` — folded from
-    `identity.*`. `google_sub` indexes the OAuth identity → actor mapping.
+    email UNIQUE, roles text[], last_event_seq)` — folded from `identity.*`.
+    `email` indexes the login identity → actor mapping.
 
 ## Event types (seeded registry)
 
-- `identity.actor.registered@1` — payload `{handle, display_name, kind,
-  google_sub, email}`. subject = actor id.
+- `identity.actor.registered@1` — payload `{handle, display_name, kind, email}`.
+  subject = actor id.
 - `identity.role.granted@1` / `identity.role.revoked@1` — payload `{role}`.
   subject = actor id. (Scaffolds authz; not exercised by the beta UI.)
 - `chat.thread.created@1` — payload `{title}`. subject = stream = thread id.
@@ -170,42 +185,55 @@ on startup / reconnect:
 
 ## REST surface
 
-| Verb & path                          | Maps to                                  |
-|--------------------------------------|------------------------------------------|
-| `POST /events`                       | append (writer)                          |
-| `GET  /events?subject=&after=seq`    | replay/tail the log for a subject        |
-| `GET  /projections/chat?thread=`     | chat thread read model                   |
-| `GET  /projections/actors`           | actor_state read model                   |
+| Verb & path                          | Maps to                                    |
+|--------------------------------------|--------------------------------------------|
+| `POST /events`                       | append (writer)                            |
+| `GET  /events?subject=&after=seq`    | replay/tail the log for a subject          |
+| `GET  /projections/chat?thread=`     | chat thread read model                     |
+| `GET  /projections/actors`           | actor_state read model                     |
 | `GET  /twins/:id`                    | stub (501 / empty) — placeholder for later |
-| `GET  /stream` (SSE)                 | NOTIFY-fed live tail                      |
-| `GET  /auth/google`                  | begin OAuth (302 to Google)              |
-| `GET  /auth/google/callback`         | finish OAuth, set session, 302 to web    |
-| `GET  /auth/me`                      | current actor (or 401)                   |
-| `POST /auth/logout`                  | clear session cookie                     |
+| `GET  /stream` (SSE)                 | NOTIFY-fed live tail                       |
+| `POST /auth/request`                 | begin login: issue magic-link for an email |
+| `GET  /auth/callback?token=`         | verify token, set session, 302 to web      |
+| `GET  /auth/me`                      | current actor (or 401)                     |
+| `POST /auth/logout`                  | clear session cookie                       |
 
 - Stateless request/response; auth checked on every protected call. Live updates
   ride SSE, one NOTIFY-fed broadcast per connected client. Only `POST /events`
   touches the log; reads hit projections.
 
-## Google OAuth flow
+## Magic-link auth flow
 
-1. `GET /auth/google` — generate `state` + PKCE verifier, store in a short-lived
-   signed cookie, 302 to Google's consent URL (`scope=openid email profile`).
-2. `GET /auth/google/callback?code&state` — verify `state`, exchange `code`
-   (with PKCE verifier) for tokens, verify the `id_token` signature/audience,
-   extract `{ sub, email, name }`.
-3. Resolve actor: look up `actor_state.google_sub = sub`. If absent, append
-   `identity.actor.registered@1` (handle derived from email, `kind='human'`,
-   `google_sub`, `email`) — the projector inserts the `actor` row.
+1. `POST /auth/request { email }` — normalize the email; issue a random
+   single-use token; store `sha256(token)` + `email` + `expires_at`
+   (`MAGIC_LINK_TTL`, default 15 min) in `login_token`. Build the link
+   `WEB_ORIGIN/auth/callback?token=<token>` (callback proxied to the service)
+   and hand it to the injected `Mailer`. The **`ConsoleMailer`** logs the full
+   link to the server console and, in dev, the endpoint returns it in the JSON
+   response for convenience. Always responds `200` regardless of whether the
+   email is known (no account enumeration).
+2. `GET /auth/callback?token` — hash the token, look up an unexpired, unused
+   `login_token`; mark it `used_at = now()` atomically (single-use). On miss /
+   expiry → `400`.
+3. Resolve actor via the `IdentityProvider`: look up `actor_state.email`. If
+   absent, append `identity.actor.registered@1` (handle derived from the email
+   local-part, `kind='human'`, `email`) — the projector inserts the `actor` row.
 4. Set a signed, HTTP-only, `SameSite=Lax` session cookie carrying `actor_id`;
    302 back to `WEB_ORIGIN`.
 5. `GET /auth/me` returns the actor from the session; `POST /auth/logout` clears
    the cookie.
 
-**Testability:** the Google token verifier and code-exchange are injected
-(interface `GoogleVerifier`), so unit tests substitute a fake that returns a
-fixed `{sub,email,name}` — no live Google calls. The actor-resolution logic
-(find-or-register) is the unit under test.
+**`IdentityProvider` seam.** `app/identity.ts` exposes
+`resolveActor(claim: { email, name? }) → actor_id`, doing find-or-register
+against `actor_state`. Magic-link supplies the verified `email`; a future
+`GoogleProvider` would supply the same shape from an `id_token`. The transport
+verb differs per provider; the find-or-register core is shared and is the unit
+under test.
+
+**Testability.** `Mailer` and the token store are injected. Unit tests use a
+fake `Mailer` (captures the link, asserts no real send) and exercise
+issue→verify→consume + find-or-register with an in-memory/throwaway store. No
+network calls anywhere in the auth path.
 
 ## Authz (beta)
 
@@ -216,8 +244,10 @@ honored if present but no UI drives them. Full RBAC is deferred.
 
 ## Webapp
 
-- `auth.tsx` — calls `GET /auth/me`; if 401 shows a "Sign in with Google" button
-  linking to `GET /auth/google`. On return, `/auth/me` populates session state.
+- `auth.tsx` — calls `GET /auth/me`; if 401 shows an email-entry form that
+  `POST /auth/request`s, then a "check your email" state (in dev, surfaces the
+  returned link directly). After the callback redirect, `/auth/me` populates
+  session state.
 - `Chat.tsx` — lists threads (`GET /projections/actors` for names,
   `GET /projections/chat?thread=` for messages), a composer that `POST /events`
   a `chat.message.posted@1` with the client-asserted `stream_seq`, and an
@@ -231,8 +261,9 @@ honored if present but no UI drives them. Full RBAC is deferred.
 - Append: ajv failure → `400` with field detail; trigger failure → `422`
   (authoritative reject); unique-violation → `409` with current stream version;
   unknown `event_type` → `400`.
-- Auth: bad/expired `state` → `400`; token verify failure → `401`; missing
-  session on protected route → `401`.
+- Auth: `POST /auth/request` always `200` (no enumeration); invalid / expired /
+  already-used token at callback → `400`; missing session on a protected route
+  → `401`.
 - Projector: a fold error logs and halts that projector (does not advance
   checkpoint) so it can be fixed and resumed; the log is untouched.
 - SSE: dropped client connections are pruned from the broadcast hub.
@@ -245,9 +276,10 @@ honored if present but no UI drives them. Full RBAC is deferred.
 2. **Infra integration (throwaway PG, `DATABASE_URL_TEST`):** appender
    round-trips, optimistic-concurrency 409 on colliding `stream_seq`, trigger
    rejects schema-invalid payload, projector catch-up + checkpoint advance +
-   rebuild-from-zero.
-3. **Application:** command authz + validate with a fake appender; auth
-   find-or-register with a fake `GoogleVerifier`.
+   rebuild-from-zero, login-token issue/expire/single-use semantics.
+3. **Application:** command authz + validate with a fake appender; identity
+   find-or-register and the full magic-link issue→verify→consume cycle with a
+   fake `Mailer`.
 4. Each unit is built test-first; the task is not done until its tests pass.
 
 ## Milestones (implementation order)
@@ -256,16 +288,18 @@ honored if present but no UI drives them. Full RBAC is deferred.
 2. Domain: event-type registry + folds (chat, actor_state) — test-first.
 3. Infra: db, uuid, appender (+ triggers migration 003), schema cache — integration tests.
 4. Infra: generic projector + projections migration 004 + seed 005 — integration tests.
-5. Application: commands, queries, authz — tests with fakes.
+5. Application: commands, queries, authz, identity — tests with fakes.
 6. Transport: REST + SSE — wire app factory; integration smoke test.
-7. Transport: Google OAuth (`/auth/*`) + cookie session — tests with fake verifier.
+7. Transport + infra: magic-link auth (`/auth/*`, `mailer`, `loginTokens`) + cookie session — tests with fake Mailer.
 8. Webapp: auth + chat UI + SSE; Vite proxy.
 9. End-to-end manual run via docker-compose; README quickstart.
 
 ## Open dependencies the user provides
 
-- Google Cloud OAuth **Client ID + Secret** (and authorized redirect URI
-  `http://localhost:8787/auth/google/callback`), pasted into `server/.env`.
+- **None for auth** — the beta runs with the dev-mode console mailer out of the
+  box. `server/.env` only needs `DATABASE_URL` and a `SESSION_SECRET` (any random
+  string; `.env.example` provides a placeholder). Real email delivery and Google
+  OAuth are post-beta and slot in behind the `Mailer` / `IdentityProvider` seams.
 
 ## Ports (defaults)
 
