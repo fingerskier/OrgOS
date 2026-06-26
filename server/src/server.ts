@@ -1,3 +1,5 @@
+import { realpathSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify'
 import cookie from '@fastify/cookie'
 import cors from '@fastify/cors'
@@ -68,8 +70,15 @@ export async function buildApp(cfg: Config, inject?: { sql?: Sql }):
   }
 }
 
-// entrypoint
-const isMain = import.meta.url === `file://${process.argv[1]}`
+// entrypoint — robust on Windows: compare canonical native paths, not a
+// `file://`+argv string (argv[1] is backslash-separated on Windows and may be
+// relative, so the old string compare never matched and the server never listened).
+const isMain = ((): boolean => {
+  const arg = process.argv[1]
+  if (!arg) return false
+  try { return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(arg) }
+  catch { return false }
+})()
 if (isMain) {
   const cfg = loadConfig()
   const { app } = await buildApp(cfg)
