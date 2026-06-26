@@ -33,28 +33,27 @@ Maps onto the registry columns:
 ## Rules
 
 **Past tense, always.** Events are facts that already happened —
-`message.posted`, not `post.message` or `message.posting`. The verb is the
-record of a completed change. Commands/intents (future tense) are not events
-and don't go in the log.
+`message.posted`, not `post.message` or `message.posting`.
+The verb is the record of a completed change.
+Commands/intents (future tense) are not events and don't go in the log.
 
-**Names are stable.** A published `name` is a contract. Never repurpose or
-silently change the meaning of an existing `namespace.name`. Readers across
-the federation depend on it.
+**Names are stable.** A published `name` is a contract.
+Never repurpose or silently change the meaning of an existing `namespace.name`.
+Readers across the federation depend on it.
 
 **Breaking schema changes create a new version.** Bump `version` when a change
-would break existing readers (see [Versioning](#versioning)). The old version
-stays registered and replayable.
+would break existing readers (see [Versioning](#versioning)).
+The old version stays registered and replayable.
 
 **Deprecated events remain readable forever.** Mark a type `status =
-'deprecated'` to stop new writes; never delete it. The log is append-only and
-immutable — historical events of a deprecated type must always fold correctly.
+'deprecated'` to stop new writes; never delete it.
+The log is append-only and immutable — historical events of a deprecated type must always fold correctly.
 Deprecation is a writer-side signal, not a reader-side break.
 
 **Organizations can define local namespaces.** Core namespaces
-(`chat`, `task`, `identity`, `device`, …) are shared vocabulary. An org
-extends with its own domain (`acme.invoice.issued`) or a reserved local prefix
-(`x.*`, `local.*`) to avoid colliding with future core types. Federated peers
-ignore namespaces they don't recognize.
+(`chat`, `task`, `identity`, `device`, …) are shared vocabulary.
+An org extends with its own domain (`acme.invoice.issued`) or a reserved local prefix (`x.*`, `local.*`) to avoid colliding with future core types.
+Federated peers ignore namespaces they don't recognize.
 
 **One verb, one fact.** An event records a single state transition. If a write
 causes two independent facts, emit two events linked by `correlation_id` —
