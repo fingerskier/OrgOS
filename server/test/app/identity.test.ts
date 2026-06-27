@@ -31,4 +31,26 @@ describe('resolveActor', () => {
     const after = await sql`SELECT count(*)::int AS n FROM event WHERE namespace='identity'`
     expect(after[0]!.n).toBe(1)
   })
+
+  it('serializes concurrent first-login for one email (no double registration)', async () => {
+    const appender = makeAppender(sql)
+    const proj = makeProjector(sql, [identityProjection])
+    const identity = makeIdentity({ sql, appender, syncProjections: () => proj.tick(), orgId: ORG })
+
+    // Two callers race on the same brand-new email (e.g. a double-clicked magic
+    // link). Without per-email serialization both see an empty projection, both
+    // append identity.actor.registered@1, and the second collides on
+    // actor_state.email UNIQUE inside the projector — wedging the checkpoint.
+    const [a, b] = await Promise.all([
+      identity.resolveActor({ email: 'race@x.io' }),
+      identity.resolveActor({ email: 'race@x.io' }),
+    ])
+
+    expect(a.actorId).toBe(b.actorId)              // both callers converge on one actor
+    const actors = await sql`SELECT * FROM actor_state WHERE email='race@x.io'`
+    expect(actors).toHaveLength(1)
+    const regs = await sql`SELECT count(*)::int AS n FROM event
+      WHERE namespace='identity' AND name='actor.registered'`
+    expect(regs[0]!.n).toBe(1)
+  })
 })
