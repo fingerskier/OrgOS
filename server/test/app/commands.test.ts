@@ -24,10 +24,12 @@ describe('appendEvent command', () => {
     })).rejects.toBeInstanceOf(ValidationError)
     expect(appender.append).not.toHaveBeenCalled()
   })
-  it('rejects an unauthorized type', async () => {
-    const cmd = makeCommands({ appender: fakeAppender() as any, syncProjections: vi.fn() })
+  it('rejects an unauthorized type without appending', async () => {
+    const appender = fakeAppender()
+    const cmd = makeCommands({ appender: appender as any, syncProjections: vi.fn() })
     await expect(cmd.appendEvent({ actorId: 'a1', orgId: 'o1', roles: [] }, {
       type: 'identity.role.granted@1', subjectId: 'a1', streamId: 'a1', streamSeq: 1, payload: { role: 'admin' },
     })).rejects.toBeInstanceOf(AuthzError)
+    expect(appender.append).not.toHaveBeenCalled()   // authz must gate BEFORE the append
   })
 })
