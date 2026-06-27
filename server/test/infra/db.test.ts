@@ -21,10 +21,10 @@ describe('migrations', () => {
       VALUES (${'00000000-0000-7000-8000-000000000001'}, 'x', 'a.b', 1, '{}'::jsonb) RETURNING id`
     const ins = async () => (await sql`INSERT INTO event
       (id, event_type_id, namespace, name, version, actor_id, org_id, payload)
-      VALUES (gen_random_uuid(), ${t.id}, 'x', 'a.b', 1,
+      VALUES (gen_random_uuid(), ${t!.id}, 'x', 'a.b', 1,
               ${'00000000-0000-7000-8000-000000000002'},
               ${'00000000-0000-7000-8000-000000000002'}, '{}'::jsonb)
-      RETURNING seq`)[0].seq
+      RETURNING seq`)[0]!.seq
     const s1 = await ins(); const s2 = await ins()
     expect(BigInt(s2)).toBeGreaterThan(BigInt(s1))
   })

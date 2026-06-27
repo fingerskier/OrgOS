@@ -39,7 +39,7 @@ export function makeAppender(sql: Sql) {
                              subject_id, stream_id, stream_seq, payload, metadata)
           VALUES (${id}, ${etId}, ${namespace}, ${name}, ${version}, ${input.actorId}, ${input.orgId},
                   ${input.subjectId}, ${input.streamId}, ${input.streamSeq},
-                  ${sql.json(input.payload)}, ${sql.json(input.metadata ?? {})})
+                  ${sql.json(input.payload as Parameters<typeof sql.json>[0])}, ${sql.json((input.metadata ?? {}) as Parameters<typeof sql.json>[0])})
           RETURNING id, seq::text`
         return rows[0]!
       } catch (err) {

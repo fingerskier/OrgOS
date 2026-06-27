@@ -31,7 +31,7 @@ describe('projector', () => {
     expect(threads).toHaveLength(1)
     expect(msgs[0]).toMatchObject({ body: 'hi', thread_id: thread })
     const cp = await sql`SELECT last_event_seq FROM projection_checkpoint WHERE name='chat'`
-    expect(BigInt(cp[0].last_event_seq)).toBeGreaterThan(0n)
+    expect(BigInt(cp[0]!.last_event_seq)).toBeGreaterThan(0n)
   })
 
   it('rebuild from zero reproduces identical state', async () => {

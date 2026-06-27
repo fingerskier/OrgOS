@@ -6,6 +6,7 @@
     "migrate": "tsx --env-file=.env bin/migrate.ts",
     "dev": "tsx watch --env-file=.env src/server.ts",
     "start": "tsx --env-file=.env src/server.ts",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -19,6 +20,7 @@
     "uuidv7": "^1.0.2"
   },
   "devDependencies": {
+    "@types/node": "^22.20.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^3.0.5"

@@ -29,6 +29,6 @@ describe('resolveActor', () => {
     const b = await identity.resolveActor({ email: 'matt@x.io' })
     expect(b.actorId).toBe(a.actorId)              // no duplicate registration
     const after = await sql`SELECT count(*)::int AS n FROM event WHERE namespace='identity'`
-    expect(after[0].n).toBe(1)
+    expect(after[0]!.n).toBe(1)
   })
 })

@@ -1,5 +1,11 @@
-import Ajv, { type ValidateFunction } from 'ajv'
-import addFormats from 'ajv-formats'
+import _Ajv, { type ValidateFunction } from 'ajv'
+import _addFormats from 'ajv-formats'
+
+// ajv and ajv-formats are CJS packages whose .d.ts use `export default`, which
+// NodeNext types as the module namespace (not constructable/callable). Re-bind
+// through `.default` — a type-only fix; the runtime values already work via tsx.
+const Ajv = _Ajv as unknown as typeof _Ajv.default
+const addFormats = _addFormats as unknown as typeof _addFormats.default
 
 export interface EventTypeDef {
   namespace: string
