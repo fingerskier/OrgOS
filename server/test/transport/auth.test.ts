@@ -54,4 +54,11 @@ describe('magic-link auth', () => {
     const bad = await app.inject({ method: 'GET', url: '/auth/me', cookies: { sid: `${sid.value}x` } })
     expect(bad.statusCode).toBe(401)
   })
+  it('me is 401 for a validly-signed cookie whose actor does not exist', async () => {
+    // a correctly-signed sid carrying an actor_id with no actor_state row must
+    // not authenticate — unsignSid succeeds but the lookup misses
+    const signed = app.signCookie('00000000-0000-7000-8000-0000deadbeef')
+    const res = await app.inject({ method: 'GET', url: '/auth/me', cookies: { sid: signed } })
+    expect(res.statusCode).toBe(401)
+  })
 })
