@@ -5,9 +5,9 @@ on:
     branches: [main]
   pull_request:
 
-# No lockfiles are committed yet, so we use `npm install` and skip setup-node's
-# npm cache (which requires a lockfile). Committing package-lock.json in each
-# package and switching to `npm ci` is the reproducibility hardening follow-up.
+# Lockfiles (server/package-lock.json, web/package-lock.json) are committed, so
+# jobs use `npm ci` for reproducible installs and cache the npm download dir
+# (keyed on each lockfile) via setup-node.
 
 jobs:
   web:
@@ -21,7 +21,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
       - run: npm run typecheck
       - run: npm run test:run
 
@@ -65,10 +67,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
 
       - name: Install deps
         working-directory: server
-        run: npm install --no-audit --no-fund
+        run: npm ci
 
       - name: Typecheck
         working-directory: server
