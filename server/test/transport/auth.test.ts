@@ -39,4 +39,19 @@ describe('magic-link auth', () => {
     const me = await app.inject({ method: 'GET', url: '/auth/me' })
     expect(me.statusCode).toBe(401)
   })
+  it('me returns the actor with a valid signed cookie, and 401 if it is tampered', async () => {
+    const req = await app.inject({ method: 'POST', url: '/auth/request', payload: { email: 'sess@x.io' } })
+    const token = new URL(req.json().devLink).searchParams.get('token')!
+    const cb = await app.inject({ method: 'GET', url: `/auth/callback?token=${token}` })
+    const sid = (cb.cookies as Array<{ name: string; value: string }>).find((c) => c.name === 'sid')!
+    expect(sid.value).toBeTruthy()
+
+    const ok = await app.inject({ method: 'GET', url: '/auth/me', cookies: { sid: sid.value } })
+    expect(ok.statusCode).toBe(200)
+    expect(ok.json().actor.email).toBe('sess@x.io')
+
+    // corrupting the signature must reject — the cookie is the only credential
+    const bad = await app.inject({ method: 'GET', url: '/auth/me', cookies: { sid: `${sid.value}x` } })
+    expect(bad.statusCode).toBe(401)
+  })
 })

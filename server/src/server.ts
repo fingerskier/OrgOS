@@ -15,7 +15,7 @@ import { makeLoginTokens } from './infra/loginTokens.js'
 import { ConsoleMailer } from './infra/mailer.js'
 import { makeSseHub } from './transport/sse.js'
 import { registerRest } from './transport/rest.js'
-import { registerAuth } from './transport/auth.js'
+import { registerAuth, unsignSid } from './transport/auth.js'
 import type { ActorCtx } from './app/authz.js'
 
 const ORG_ID = '00000000-0000-7000-8000-00000000c0de'
@@ -40,12 +40,10 @@ export async function buildApp(cfg: Config, inject?: { sql?: Sql }):
   await app.register(cors, { origin: cfg.webOrigin, credentials: true })
 
   const getActor = async (req: FastifyRequest): Promise<ActorCtx | null> => {
-    const raw = req.cookies[SID]
-    if (!raw) return null
-    const unsigned = app.unsignCookie(raw)
-    if (!unsigned.valid || !unsigned.value) return null
+    const actorId = unsignSid(app, req, SID)
+    if (!actorId) return null
     const rows = await sql<{ actor_id: string; roles: string[] }[]>`
-      SELECT actor_id, roles FROM actor_state WHERE actor_id = ${unsigned.value}`
+      SELECT actor_id, roles FROM actor_state WHERE actor_id = ${actorId}`
     if (!rows[0]) return null
     return { actorId: rows[0].actor_id, orgId: ORG_ID, roles: rows[0].roles }
   }

@@ -50,12 +50,24 @@ export function registerAuth(app: FastifyInstance, deps: AuthDeps): void {
   })
 }
 
-export async function currentActor(app: FastifyInstance, sql: Sql, req: FastifyRequest, SID: string) {
+/**
+ * Verify the signed session cookie and return the raw actor_id it carries, or
+ * null when the cookie is absent or its signature does not validate. This is
+ * the single trusted gate from cookie to identity — every caller that turns a
+ * request into an actor goes through it (see getActor in server.ts).
+ */
+export function unsignSid(app: FastifyInstance, req: FastifyRequest, SID: string): string | null {
   const raw = req.cookies[SID]
   if (!raw) return null
   const u = app.unsignCookie(raw)
   if (!u.valid || !u.value) return null
+  return u.value
+}
+
+export async function currentActor(app: FastifyInstance, sql: Sql, req: FastifyRequest, SID: string) {
+  const actorId = unsignSid(app, req, SID)
+  if (!actorId) return null
   const rows = await sql<any[]>`SELECT actor_id, handle, display_name, kind, status, email, roles
-    FROM actor_state WHERE actor_id = ${u.value}`
+    FROM actor_state WHERE actor_id = ${actorId}`
   return rows[0] ?? null
 }
