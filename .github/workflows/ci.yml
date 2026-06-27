@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# No lockfiles are committed yet, so we use `npm install` and skip setup-node's
+# npm cache (which requires a lockfile). Committing package-lock.json in each
+# package and switching to `npm ci` is the reproducibility hardening follow-up.
+
+jobs:
+  web:
+    name: web (typecheck + vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run test:run
+
+  server:
+    name: server (typecheck + vitest)
+    runs-on: ubuntu-latest
+    env:
+      # vitest does not load .env; testDb.ts reads DATABASE_URL_TEST from the
+      # process env and runs migrations into a fresh schema per test.
+      DATABASE_URL_TEST: postgres://orgos:orgos@localhost:5432/orgos
+    steps:
+      - uses: actions/checkout@v4
+
+      # The schema's validation triggers depend on the pg_jsonschema extension,
+      # which stock postgres images do not ship. Build the same image the local
+      # docker-compose uses (postgres:16 + pg_jsonschema v0.3.4, amd64 .deb —
+      # matches the amd64 ubuntu-latest runner) and run it as the test database.
+      - name: Build Postgres image (pg_jsonschema)
+        run: docker build -t orgos-db -f db/Dockerfile .
+
+      - name: Start Postgres
+        run: |
+          docker run -d --name orgos-db \
+            -e POSTGRES_USER=orgos -e POSTGRES_PASSWORD=orgos -e POSTGRES_DB=orgos \
+            -p 5432:5432 orgos-db
+
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            if docker exec orgos-db pg_isready -U orgos -d orgos >/dev/null 2>&1; then
+              echo "postgres ready after $((i*2))s"
+              exit 0
+            fi
+            echo "waiting for postgres ($i)..."
+            sleep 2
+          done
+          echo "postgres did not become ready" >&2
+          docker logs orgos-db
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install deps
+        working-directory: server
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck
+        working-directory: server
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: server
+        run: npm test
