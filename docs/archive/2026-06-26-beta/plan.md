@@ -1,3 +1,9 @@
+> **STATUS: Historical (frozen) — DO NOT EXECUTE OR COPY CODE FROM THIS FILE.**
+> Point-in-time build script for the beta slice. Its inline source predates fixes on `main`:
+> read-route auth (7a309c2), Windows isMain guard (d5a9e1e), web 409-retry stale-closure (122275e),
+> concurrent first-login race (dae76d1), unsignSid extraction (90e4823). Copying from it can
+> reintroduce a known security hole. See [docs/ARCHITECTURE.md](../../ARCHITECTURE.md) for the living design.
+
 # OrgOS Beta Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

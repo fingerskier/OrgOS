@@ -1,3 +1,8 @@
+> **STATUS: Historical (frozen).** The approved beta design spec, executed and merged as PR #1.
+> Superseded by [docs/ARCHITECTURE.md](../../ARCHITECTURE.md). Known divergences from the shipped code:
+> trigger rejects surface as **400** (not the 422 written here), and a `chat_thread` read model +
+> `GET /projections/threads` were added for the UI. Do not update this file.
+
 # OrgOS Beta — Design Spec
 
 > Status: approved 2026-06-26. Scope: **Identity + Chat** slice of the OrgOS
