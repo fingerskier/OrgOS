@@ -20,6 +20,10 @@ docker compose up -d
 This starts `orgos-db-1`, a custom Postgres 16 image with `pg_jsonschema` pre-installed,
 mapped to **host port 5433** (container port 5432).
 
+> **Note (arm64 hosts):** `db/Dockerfile` installs a prebuilt `pg_jsonschema` `.deb`
+> (v0.3.4, PG16) that is **amd64-specific**. On an arm64 host (e.g. Apple Silicon),
+> swap the asset for the arm64 variant from the same release.
+
 ---
 
 ## 2. Server Setup
@@ -77,7 +81,16 @@ Open **http://localhost:5173** in your browser.
 
 ---
 
-## 5. Try the Happy Path
+## 5. First Admin
+
+A fresh install has **no admin**: sign-in registers an actor with **no roles**, and
+`identity.role.granted@1` may only be appended by an existing admin (`src/app/authz.ts`).
+Bootstrap the first admin out-of-band — see the admin bootstrap walkthrough in
+[EXAMPLES.md](EXAMPLES.md).
+
+---
+
+## 6. Try the Happy Path
 
 1. **Create a thread** — use the UI or `POST /events` with `type: "chat.thread.created@1"`.
 2. **Post a message** — use the UI or `POST /events` with `type: "chat.message.posted@1"`.
@@ -86,9 +99,18 @@ Open **http://localhost:5173** in your browser.
 
 ---
 
-## 6. Running Tests
+## 7. Running Tests
 
-Tests require the Docker Postgres container to be up (`docker compose up -d`).
+Both packages have their own Vitest suite.
+
+### Server (`server/`)
+
+`npm test` runs the whole `server/test/**` suite in a single Vitest run: pure
+domain/fold unit tests (`test/domain/`) plus integration tests that hit a real
+database (`test/infra/`, `test/transport/`, parts of `test/app/` — each creates
+a fresh migrated schema via `test/helpers/testDb.ts`). Because the integration
+tests are included, `npm test` needs the Docker Postgres container up
+(`docker compose up -d`).
 
 Vitest does **not** auto-load `.env`, so pass `DATABASE_URL_TEST` inline:
 
@@ -102,8 +124,37 @@ DATABASE_URL_TEST=postgres://orgos:orgos@localhost:5433/orgos npm test
 $env:DATABASE_URL_TEST='postgres://orgos:orgos@localhost:5433/orgos'; npm test
 ```
 
-All tests are in `server/`. The test suite covers pure event-fold unit tests,
-infra integration tests (real DB), and app/auth tests with service fakes.
+The pure domain tests run without a database if you target them directly:
+
+```bash
+npx vitest run test/domain
+```
+
+### Web (`web/`)
+
+The web suite (`web/src/*.test.*`) runs against jsdom with a fake `fetch` — no
+database or server needed:
+
+```bash
+cd web
+npm run test:run     # single run (CI mode)
+npm test             # watch mode
+```
+
+---
+
+## CI
+
+`.github/workflows/ci.yml` runs two jobs on every push to `main` and on every
+pull request:
+
+| Job | Steps |
+|-----|-------|
+| `web` | `npm ci` → `npm run typecheck` → `npm run test:run` |
+| `server` | build the `db/Dockerfile` Postgres image (pg_jsonschema), start it on port 5432, wait for `pg_isready`, then `npm ci` → `npm run typecheck` → `npm test` |
+
+Lockfiles are committed, so CI uses `npm ci` with the npm cache keyed on each
+package's `package-lock.json`.
 
 ---
 

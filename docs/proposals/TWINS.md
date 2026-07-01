@@ -1,11 +1,17 @@
 # Digital Twins
 
+> **STATUS: Proposal — not implemented.** GET /twins/:id returns 501; no
+> `twin` / `twin_type` tables exist in the migrations. Kept as a design
+> proposal; buildable as a satellite package against the public event API.
+> See [ROADMAP.md](../../ROADMAP.md).
+
 > A **digital twin** is the live, server-side representation of a real-world
 > object — a sensor, a room, a vehicle, a pump. It is a **projection**: its
 > `state` is folded from events whose `subject_id` is the twin's `id`. Nothing
 > about a twin is authoritative except the events behind it; the `twin` row can
-> be dropped and rebuilt at any time. See [SCHEMA.md](./SCHEMA.md) for the
-> `twin` / `twin_type` tables and [QUERY.md](./QUERY.md) for the fold patterns.
+> be dropped and rebuilt at any time. See [SCHEMA.md](../SCHEMA.md) for the
+> event log tables this builds on and [EXAMPLES.md](../EXAMPLES.md) for the
+> fold patterns.
 
 Two registry/projection halves:
 
@@ -13,6 +19,64 @@ Two registry/projection halves:
   Schema describing what a valid `twin.state` looks like.
 - **`twin`** (projection) — an *instance*: a folded `state`, a `last_event_seq`
   high-water mark, and a `parent_id` for containment.
+
+---
+
+## Proposed tables
+
+Neither table exists in the migrations; these are the proposed shapes.
+
+### `twin_type` (registry)
+
+Defines a class of digital twin — the schema for a kind of real-world object.
+
+```
+twin_type {
+  id          uuid    PK
+  namespace   text                -- e.g. 'facility', 'fleet'
+  name        text                -- e.g. 'sensor', 'room', 'vehicle'
+  schema      jsonb               -- JSON Schema for twin.state
+  status      text                -- 'active' | 'deprecated'
+  created_at  timestamptz
+  UNIQUE (namespace, name)
+}
+```
+
+### `twin` (projection)
+
+A digital representation of a real-world object, evolving through events.
+**Derived** — rebuilt by folding events whose `subject_id` = `twin.id`.
+
+```
+twin {
+  id              uuid          PK
+  twin_type_id    uuid          FK -> twin_type.id
+  org_id          uuid          FK -> actor.id
+  external_ref    text          -- serial number, MAC, asset tag
+  display_name    text
+  parent_id       uuid          FK -> twin.id      -- containment (device in room in building)
+  state           jsonb         -- current folded state (validated vs twin_type.schema)
+  last_event_seq  bigint        -- high-water mark; how far this twin is replayed
+  updated_at      timestamptz
+  UNIQUE (org_id, twin_type_id, external_ref)
+}
+```
+
+---
+
+## Fix before building
+
+- **`uuidv7()` does not exist on the deployed `postgres:16` image.** The SQL
+  examples below call it for convenience; in practice ids must be
+  app-generated (as the server already does for events) and passed in as
+  parameters.
+- **The raw `INSERT INTO event` examples depict the writer's *internal* step.**
+  All appends must go through the append path — authorization and payload
+  validation included — never direct SQL against the log.
+- **The `last_event_seq` guard is redelivery-safe, not out-of-order-safe.**
+  With a shallow `jsonb` merge, a stale-but-newer-seq event can still
+  partially overwrite fresher fields. Ordered delivery (or a per-field fold)
+  is still required; see the softened note in §3.
 
 ---
 
@@ -124,12 +188,15 @@ SET state = state || $payload,              -- jsonb merge: overlay new fields
     last_event_seq = $event_seq,
     updated_at = now()
 WHERE id = $sensor_twin_id
-  AND $event_seq > last_event_seq;          -- idempotent: never apply out of order
+  AND $event_seq > last_event_seq;          -- idempotent: skip redelivered events
 ```
 
-> The `last_event_seq` guard makes the fold **idempotent and replay-safe** — a
-> redelivered or out-of-order event is skipped, exactly as a catch-up poll
-> (QUERY §7) requires.
+> The `last_event_seq` guard makes the fold **redelivery-safe** — a
+> re-delivered or already-applied event is skipped, exactly as a catch-up poll
+> requires. It is **not** out-of-order-safe: with a shallow `jsonb` merge, an
+> event that is stale in wall-clock terms but carries a newer `seq` can still
+> partially overwrite fresher fields. Feed the fold in `seq` order (or fold
+> per-field, latest-writer-wins) — the guard alone does not guarantee this.
 
 A semantic state change uses `device.state.changed` / `twin.state.updated`;
 telemetry uses `device.telemetry.received`.
@@ -167,8 +234,7 @@ WHERE twin_type_id = (SELECT id FROM twin_type WHERE namespace='facility' AND na
 ### State without the projection (fold on the fly)
 
 Because `twin` is disposable, you can recompute state straight from the log —
-the latest-wins fold from QUERY §3. Useful for rebuilds, audits, or
-point-in-time queries:
+the latest-wins fold. Useful for rebuilds, audits, or point-in-time queries:
 
 ```sql
 -- current state by replaying the twin's own events
