@@ -1,35 +1,27 @@
 # The Organization Operating System (OrgOS)
 
-> **An open-source, decentralized operating system for organizations built upon an append-only event log.**
+> **An open-source, event-sourced operating system for organizations.**
 >
 > Chat is not the product. Tickets are not the product. Wikis are not the product.
 > **Events are the product.**
 
-> 🛠️ **Running the beta locally?** See [README.dev.md](README.dev.md).
+Modern organizations scatter their reality across a dozen silos, each storing its own copy of the truth. OrgOS inverts this: there is exactly one truth — an append-only log of immutable events — and everything else (chat, membership, dashboards, whatever comes next) is a rebuildable projection of that log. If a view is wrong, delete it and replay. The history is never wrong.
 
 ---
 
-## Vision
+## What Works Today
 
-Modern organizations are fragmented.
+The Identity + Chat beta is implemented and tested:
 
-Messages live in Slack.
-Code lives in GitHub.
-Knowledge lives in Confluence.
-Tasks live in Jira.
-Meetings live in Google Calendar.
-Sensors live on MQTT.
-AI lives somewhere else.
+- **Passwordless magic-link auth** — request a link by email, click, you're in (signed-cookie session)
+- **Event append** — one `POST /events` path with authoritative JSON Schema validation enforced by a database trigger (`pg_jsonschema`), plus optimistic concurrency (`streamSeq` → `409` on conflict)
+- **Projections** — identity (actors), chat threads, and chat messages, folded from the log by a checkpointed projector
+- **SSE live tail** — a `/stream` feed announces each append's sequence number; clients catch up via `GET /events?subject=&after=` and refetch projections
+- **React chat UI** — threads and messages; edit/delete correction events (`chat.message.edited`, `chat.message.deleted`) are validated and folded by the kernel but not yet surfaced in the UI
+- **Single org per deployment** — multi-org and federation are roadmap, not reality
+- **Dev-mode ConsoleMailer** — magic links print to the server console; no email credentials required
 
-Every system stores its own copy of reality.
-
-**OrgOS inverts this model.**
-
-There is only one reality:
-
-> **A continuously growing stream of immutable events.**
-
-Everything else is merely a projection.
+Run it locally: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ---
 
@@ -37,312 +29,110 @@ Everything else is merely a projection.
 
 ### Reality is Events
 
-Nothing changes.
-
-Only new events are recorded.
+Nothing is updated in place. Only new events are recorded.
 
 ```
-UserCreated
-MemberJoined
-MessagePosted
-PrayerRequested
-IssueOpened
-CommitMerged
-AssessmentCompleted
-SensorReadingReceived
-InvoicePaid
-DeviceOffline
+identity.actor.registered
+chat.message.posted
+issue.opened
+invoice.paid
+sensor.reading.received
 ```
 
-The past is never rewritten.
-
-History is preserved forever.
-
----
+The past is never rewritten. History is preserved forever.
 
 ### State is Derived
 
-There is no "database record."  Current state is computed from the event history.
+There is no "database record." Current state is computed from the event history.
 
 ```
-Events
-   ↓
-Projection
-   ↓
-Current State
+Events → Projection → Current State
 ```
 
-Need today's state?  Replay the events.
-
-Need yesterday's state?  Replay to yesterday.
-
-Need to audit?  Read the log.
-
----
+Need today's state? Replay the events. Need yesterday's? Replay to yesterday. Need to audit? Read the log.
 
 ### Everything is an Actor
 
-Humans are actors.
-AI agents are actors.
-Devices are actors.
-Organizations are actors.
-Projects are actors.
-Even workflows become actors.
+Humans, AI agents, devices, and services are all actors with identity and permissions, and all speak the same language: events.
 
 ```
-Matt
-Youth Ministry
-Spectrum Kiosk #12
-GitHub
-Accounting AI
-Church Calendar
-Temperature Sensor
+Alice                (human)
+Ops Assistant        (AI)
+Lobby Kiosk #3       (device)
+CI Pipeline          (service)
 ```
 
-All speak the same language:
+### Immutability, Corrections as Events
 
-Events.
+Events cannot be modified or deleted. Mistakes are corrected by appending new events — `chat.message.edited`, `chat.message.deleted` — that projections fold over. Nothing disappears; everything is explainable.
+
+### Permissions are Events
+
+Grants and revocations are themselves events in the log, making authorization reproducible and auditable at any point in history.
+
+### The Narrow Waist
+
+There is exactly one way to write: the append endpoint, which authorizes the actor, validates the payload against the registered schema, and lets the database trigger have the final word. No privileged side door — not for admins, not for AI, not for internal services.
 
 ---
 
-## Core Architecture
+## Architecture
 
 ```
-                    Organization
-
-             ┌─────────────────────┐
-             │ Identity & Trust    │
-             └──────────┬──────────┘
-                        │
-        ┌───────────────▼────────────────┐
-        │      Append-only Event Log     │
-        └───────────────┬────────────────┘
-                        │
-      ┌─────────────────┼─────────────────┐
-      │                 │                 │
-  Projections      Automation       Federation
-      │                 │                 │
-      ▼                 ▼                 ▼
- Chat UI          AI Workers       Other Organizations
- Wiki             Rules Engine     Family
- Kanban           Workflows        Churches
- Timeline         Notifications    Businesses
- CRM              Integrations     Communities
- Dashboards
+┌──────────────────────── Kernel ────────────────────────┐
+│                                                        │
+│  Append-only Event Log ── Type Registry (JSON Schema)  │
+│            │                                           │
+│        Projector ──► actor / thread / message tables   │
+│            │                                           │
+│        REST + SSE  (one append path, many reads)       │
+└────────────────────────────┬───────────────────────────┘
+                             │  plain HTTP clients
+┌──────────────────────── Userland ──────────────────────┐
+│  Web UI · custom projections · bots · bridges ·        │
+│  automation — all built as clients of the kernel API   │
+└────────────────────────────────────────────────────────┘
 ```
+
+The kernel stays small: log, registry, projector, API. Everything else lives in userland and earns no special access.
 
 ---
 
-## Everything is a Projection
+## Vision
 
-No application owns data.
-
-Applications simply render the event log differently.
-
-| Projection | Purpose |
-|------------|---------|
-| Chat | Conversations |
-| Wiki | Living documentation |
-| Timeline | Organizational history |
-| Kanban | Task management |
-| Calendar | Scheduled events |
-| Dashboard | Metrics |
-| CRM | Relationships |
-| Knowledge Graph | Connected information |
-| Digital Twin | Real-world systems |
-| AI Workspace | Reasoning over events |
-
-Every view originates from the same source.
-
----
-
-## Federation
-
-Organizations own their own data.
-
-No central authority.
-
-Servers federate similarly to email or Git.
-
-```
-Church A
-     │
-──── Federation ────
-     │
-Church B
-
-Business
-
-Family
-
-School
-
-Non-profit
-```
-
-Organizations choose what to share.
-Ownership is cloistered.
-
----
-
-## Local First
-
-The network is optional.
-Every node can operate independently.
-Synchronization occurs whenever connectivity exists.
-Offline is a first-class feature.
-
----
-
-## AI as First-Class Citizens
-
-AI is not a plugin.
-AI is an organizational participant.
-
-An AI has:
-- identity
-- permissions
-- subscriptions
-- memory
-- tools
-- conversations
-- responsibilities
-- accountability
-
-AI publishes events exactly like humans.
-
-```
-IssueDetected
-SummaryGenerated
-PrayerReminderCreated
-ScheduleOptimized
-HardwareFailurePredicted
-```
-
----
-
-## Immutable History
-
-Events cannot be modified.
-Mistakes are corrected by new events.
-
-```
-DocumentCreated
-↓
-DocumentEdited
-↓
-DocumentCorrected
-↓
-DocumentArchived
-```
-
-Nothing disappears.
-Everything is explainable.
-
----
-
-## Permission Model
-
-Permissions are themselves events.
-
-```
-RoleGranted
-PermissionDelegated
-AccessRevoked
-OrganizationInvited
-```
-
-Authorization becomes reproducible and auditable.
-
----
-
-## Extensibility
-
-Everything communicates through events.
-Applications subscribe to event streams.
-
-```
-GitHub
-Stripe
-Email
-MQTT
-PLC
-LLM
-Weather
-IoT
-REST
-MCP
-        │
-        ▼
-     Event Bus
-```
-
-No application requires special treatment.
-
----
-
-## Digital Twins
-
-Every real-world object may have a digital representation.
-
-```
-Person
-Organization
-Room
-Device
-Vehicle
-Server
-Sensor
-Document
-Project
-```
-
-Each twin evolves through events.
-
----
-
-## Organizational Memory
-
-The event log becomes institutional memory.
-
-Instead of asking:
-> "Where is that document?"
-
-You ask:
-> "Show me everything that has ever happened regarding this project."
-
-The system reconstructs the answer.
+Next: AI actors joining over MCP with the same identity and permission machinery as humans, and more projections (timeline, kanban, knowledge) folded from the same log. Later: federation between sovereign org nodes, each owning its own history and choosing what to share. Offline/local-first client operation was considered for the beta and dropped. Details and status per item live in [ROADMAP.md](ROADMAP.md).
 
 ---
 
 ## Core Values
 
 - Open Source
-- Decentralized
-- Federated
-- ~~Local First~~
 - Event Sourced
 - Immutable
-- Offline Capable
 - AI Native
-- Human Centered
 - Extensible
 - Explainable
 - Durable
+- Decentralized & Federated *(roadmap — a deployment is one sovereign node today)*
 
 ---
 
-## Long-Term Goal
+## Docs
 
-Build the _Linux_ of organizational collaboration.
-Not another chat application.
-Not another project manager.
-Not another wiki.
-
-A foundational operating system upon which collaboration, automation, knowledge, AI, and organizational memory naturally emerge from a shared, append-only history of events.
+| Doc | Contents |
+|-----|----------|
+| [ROADMAP.md](ROADMAP.md) | What's next, what's someday, what's dropped |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Quickstart, testing, CI |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The system as built |
+| [docs/SCHEMA.md](docs/SCHEMA.md) | Database schema reference |
+| [docs/EVENT-TYPES.md](docs/EVENT-TYPES.md) | Event vocabulary and versioning rules |
+| [docs/EXAMPLES.md](docs/EXAMPLES.md) | HTTP walkthrough + SQL fold cookbook |
+| [docs/proposals/TWINS.md](docs/proposals/TWINS.md) | Digital-twin design (proposal, not implemented) |
+| [docs/archive/2026-06-26-beta/](docs/archive/2026-06-26-beta/spec.md) | Frozen beta spec, plan, and progress ledger |
+| [LICENSE](LICENSE) | Apache 2.0 |
 
 ---
 
 ## Motto
 
-> **One history.  Infinite presentations.**
+> **One history. Infinite presentations.**
